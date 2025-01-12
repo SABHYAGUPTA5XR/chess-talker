@@ -1,105 +1,94 @@
-import requests
-import chess
-import chess.pgn
+import json
 
-def analyze_with_stockfish_api(fen, depth):
+def parse_pgn_with_stockfish_and_save(file_path, output_file, stockfish_api):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+
+    games = []  # List to hold all game data
+    current_game = {}  # Dictionary to hold metadata and moves for a single game
+    moves = []  # List to hold moves
+    reading_moves = False
+
+    game_counter = 1  # Counter for game numbering
+
+    for line in lines:
+        line = line.strip()
+        
+        if line.startswith("["):  # Metadata lines
+            key, value = line[1:-1].split(" ", 1)
+            current_game[key] = value.strip('"')
+        elif line == "":  # Empty line indicates the end of metadata/start of moves
+            if not reading_moves:
+                reading_moves = True
+            else:
+                # End of current game
+                if moves:
+                    # Process moves and enrich with Stockfish analysis
+                    current_game["GameData"] = process_moves_with_stockfish(moves, stockfish_api)
+                    games.append(current_game)
+                current_game = {}
+                moves = []
+                reading_moves = False
+        elif reading_moves:  # Moves section
+            moves.extend(line.split())
+
+    # Append the last game if not already added
+    if current_game and moves:
+        current_game["GameData"] = process_moves_with_stockfish(moves, stockfish_api)
+        games.append(current_game)
+
+    # Save games data to JSON file
+    with open(output_file, 'w') as json_file:
+        json.dump(games, json_file, indent=4)
+
+    print(f"Detailed game data saved to {output_file} successfully!")
+
+def process_moves_with_stockfish(moves, stockfish_api):
     """
-    Sends the FEN and depth to Stockfish API for analysis using a GET request.
-
-    Args:
-        fen (str): The FEN string representing the board state.
-        depth (int): Depth for Stockfish analysis (must be < 16).
-
-    Returns:
-        dict: The response from the Stockfish API or an error message.
+    Process the moves of a game and enrich them with Stockfish analysis.
     """
-    # Ensure depth is within the acceptable range
-    if depth >= 16:
-        depth = 15  # Adjust to the max accepted depth
-    
-    api_url = "https://stockfish.online/api/s/v2.php"  # Stockfish API endpoint
-    
-    # Prepare the parameters for the GET request
-    params = {
-        "fen": fen,
-        "depth": depth
+    move_data = {}
+    fen = "starting FEN here"  # Replace with the starting FEN for chess
+    for i, move in enumerate(moves):
+        player = "White" if i % 2 == 0 else "Black"  # Determine player based on move index
+        stockfish_result = get_stockfish_analysis(fen, stockfish_api)  # Simulated call to Stockfish API
+        
+        move_data[f"Move {i + 1}"] = {
+            "Player": player,
+            "FEN": fen,
+            "Depth": stockfish_result["depth"],
+            "StockfishResult": stockfish_result
+        }
+        
+        # Update the FEN after this move (you can use a library like `python-chess` for FEN updates)
+        fen = update_fen_with_move(fen, move)
+
+    return move_data
+
+def get_stockfish_analysis(fen, stockfish_api):
+    """
+    Simulated function to get Stockfish analysis for a given FEN.
+    Replace this with actual API calls to Stockfish.
+    """
+    # Replace the below dictionary with real Stockfish output
+    return {
+        "success": True,
+        "depth": 20,
+        "evaluation": "+0.34",
+        "bestMove": "e2e4",
+        "nodes": 1234567
     }
-    
-    try:
-        # Send the GET request with the parameters
-        response = requests.get(api_url, params=params)
-        
-        # Check for a successful response
-        response.raise_for_status()  # Raises an exception for 4xx/5xx HTTP status codes
-        
-        # Check if the response is empty
-        if not response.text.strip():
-            return {"error": "Empty response from API"}
-        
-        # Try to parse the JSON response
-        try:
-            return response.json()
-        except ValueError:
-            return {"error": "Invalid JSON response"}
-    
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Request failed: {e}"}
 
-
-def parse_pgn_to_api_format(pgn_file_path, depth=15):
+def update_fen_with_move(fen, move):
     """
-    Parses a .pgn file and extracts FEN positions along with the specified depth for Stockfish API input.
-
-    Args:
-        pgn_file_path (str): Path to the .pgn file containing the games.
-        depth (int): Depth for Stockfish analysis (default is 15).
-
-    Returns:
-        list: A list of dictionaries, each containing the FEN and depth for Stockfish.
+    Simulated function to update the FEN string after a move.
+    Replace this with an actual implementation using a library like `python-chess`.
     """
-    games_data = []
+    # Simulate a FEN update (this needs to be replaced with real logic)
+    return fen + f" {move}"
 
-    with open(pgn_file_path, 'r') as pgn_file:
-        while True:
-            # Read each game in the PGN file
-            game = chess.pgn.read_game(pgn_file)
-            if game is None:
-                break  # No more games to read
-            
-            # Initialize the board and replay the game
-            board = game.board()
-            for move in game.mainline_moves():
-                board.push(move)  # Play the move
-            
-            # Get the final FEN position of the game
-            final_fen = board.fen()
-            
-            # Append FEN and depth as a Stockfish API-friendly format
-            games_data.append({
-                "fen": final_fen,
-                "depth": depth
-            })
-    
-    return games_data
-
-
-# Example Usage
-if __name__ == "__main__":
-    # Path to your .pgn file
-    pgn_path = "lichess_db_standard_rated_2013-11.pgn"  # Replace with the actual path to your .pgn file
-    
-    # Call the function to parse the PGN file
-    stockfish_inputs = parse_pgn_to_api_format(pgn_path, depth=15)
-
-    # Iterate over the parsed games and analyze with Stockfish API
-    for i, game_data in enumerate(stockfish_inputs):
-        print(f"Analyzing Game {i+1}:")
-        print(f"FEN: {game_data['fen']}")
-        print(f"Depth: {game_data['depth']}")
-        
-        # Get the Stockfish analysis result
-        stockfish_output = analyze_with_stockfish_api(game_data['fen'], game_data['depth'])
-        
-        # Print the Stockfish output for each game
-        print("Stockfish Output:", stockfish_output)
-        print("-" * 30)
+# Example usage
+input_file = "dataset-game1.pgn"  # Replace with your PGN file path
+output_file = "refinedDataset.json"
+stockfish_api = "https://stockfish.online/api/s/v2.php"  # Replace with your actual Stockfish API endpoint
+parse_pgn_with_stockfish_and_save(input_file, output_file, stockfish_api)
